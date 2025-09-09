@@ -75,6 +75,26 @@
         <div id="regMsg" class="small muted"></div>
       </div>
 
+      <!-- PASO 2.5: CREAR SALA -->
+      <div class="card">
+        <h2>Crear sala</h2>
+        <div class="row" style="align-items:center;gap:12px;">
+          <label>Usuario creador:
+            <input id="creatorUsername" style="width:220px" placeholder="tu nombre (existente)" />
+          </label>
+          <button id="btnCreateRoom">Crear sala</button>
+
+          <span class="small">RoomCode: <b id="createdCode">—</b></span>
+          <button id="btnCopyCode" style="display:none;">Copiar código</button>
+
+          <label class="checkbox" style="margin-left:8px;">
+            <input type="checkbox" id="autoJoin" checked />
+            <span>Unirme automáticamente</span>
+          </label>
+        </div>
+        <div id="createMsg" class="small muted"></div>
+      </div>
+
       <!-- PASO 2: JOIN -->
       <div>
         <h2>2) Unirse a sala (no crea usuario)</h2>
@@ -172,6 +192,28 @@
     const storeUserId = (name, id) => localStorage.setItem(userKey(name), id);
 
     // ====== API REST ======
+    // ====== API: crear sala ======
+      async function apiCreateRoom(creatorUserId) {
+        // Tu controller espera el GUID crudo en el body, ej: "0000-..."
+        const res = await fetch(baseUrl + "api/rooms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(creatorUserId) // GUID como string entre comillas
+        });
+        if (!res.ok) {
+          const txt = await res.text().catch(()=> "");
+          throw new Error(`No se pudo crear la sala (${res.status}). ${txt}`);
+        }
+        const data = await res.json();
+        // Devuelve { Id/Code/... } o { id/code/... } según naming policy
+        return {
+          id:  data.id  ?? data.Id,
+          code:data.code?? data.Code,
+          min: data.minPlayers ?? data.MinPlayers,
+          max: data.maxPlayers ?? data.MaxPlayers
+        };
+      }
+
     async function apiRegisterUser(name) {
       const res = await fetch(baseUrl + "api/users/register", {
         method: "POST",
@@ -280,6 +322,67 @@
         $("regMsg").className = "small err";
       }
     };
+
+    $("btnCreateRoom").onclick = async () => {
+  const out = $("createMsg");
+  try {
+    // Base URL
+    baseUrl = $("baseUrl").value.trim() || BACKEND_BASE;
+    if (!baseUrl.endsWith("/")) baseUrl += "/";
+
+    // Username creador: usa #creatorUsername si viene, sino #username
+    const name = ($("creatorUsername").value.trim() || $("username").value.trim());
+    if (!name) { alert("Indica el usuario creador (debe existir)."); return; }
+
+    // Conseguir/crear userId según el modo (igual que en Join)
+    let id = getStoredUserId(name);
+    if (!id) {
+      if ($("useResolve").checked) {
+        id = await apiResolveUser(name);  // idempotente en dev
+      } else {
+        const found = await apiGetByUsername(name); // lookup estricto
+        if (!found) throw new Error("El usuario no existe. Primero registra el usuario.");
+        id = found.id;
+      }
+      storeUserId(name, id);
+    }
+
+    // Crear sala
+    const room = await apiCreateRoom(id);
+
+    // Mostrar código + llenar inputs de Join
+    $("createdCode").textContent = room.code;
+    $("btnCopyCode").style.display = "inline-block";
+    $("roomCode").value = room.code;
+    $("username").value = name;
+
+    out.textContent = `✅ Sala creada (Code: ${room.code}, Jugadores ${room.min}–${room.max})`;
+    out.className = "small ok";
+
+    // Auto-join si está marcado
+    if ($("autoJoin").checked) {
+      // Simular click de "Conectar" (usará #roomCode y #username ya seteados)
+      $("connect").click();
+    }
+  } catch (e) {
+    out.textContent = "❌ " + (e?.message || e);
+    out.className = "small err";
+  }
+};
+
+// Copiar código
+$("btnCopyCode").onclick = async () => {
+  const code = $("createdCode").textContent || "";
+  if (!code || code === "—") return;
+  try {
+    await navigator.clipboard.writeText(code);
+    $("createMsg").textContent = "📋 Código copiado";
+    $("createMsg").className = "small ok";
+  } catch {
+    $("createMsg").textContent = "No se pudo copiar, copia manualmente.";
+    $("createMsg").className = "small err";
+  }
+};
 
     // ====== Acciones: JOIN (paso 2) ======
     $("connect").onclick = async () => {
