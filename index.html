@@ -5,7 +5,7 @@
   <title>StroobGame – Salas + Chat (SignalR)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root { --bg:#0f172a; --card:#111827; --muted:#9ca3af; --text:#e5e7eb; --accent:#22c55e; }
+    :root { --bg:#0f172a; --card:#111827; --muted:#9ca3af; --text:#e5e7eb; --accent:#22c55e; --warn:#ef4444; }
     *{box-sizing:border-box} body{margin:0;background:linear-gradient(180deg,#0b1220,#0f172a);}
     body,button,input{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
     .wrap{max-width:1100px;margin:24px auto;padding:0 16px;color:var(--text)}
@@ -13,6 +13,7 @@
     .card{background:linear-gradient(180deg,#0b1220, #111827); border:1px solid #1f2937; border-radius:16px; padding:16px; box-shadow:0 8px 24px rgba(0,0,0,.25)}
     .col{flex:1 1 320px}
     h1{margin:0 0 8px;font-size:20px;font-weight:700}
+    h2{margin:0 0 8px;font-size:16px;font-weight:700;color:#cbd5e1}
     label{display:inline-block;margin:8px 12px 8px 0;color:var(--muted);font-size:14px}
     input{background:#0b1220;border:1px solid #253044;color:var(--text);padding:8px 10px;border-radius:10px}
     input::placeholder{color:#64748b}
@@ -32,9 +33,12 @@
     .rowgap{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
     .small{font-size:12px;color:#94a3b8}
     .ok{color:#22c55e}
-    .err{color:#ef4444}
+    .err{color:var(--warn)}
     .players li{margin:0;padding:6px 8px;border-bottom:1px dashed #1e293b;display:flex;justify-content:space-between}
     .players li:last-child{border-bottom:0}
+    .split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .danger{background:#7f1d1d;color:#fecaca;border-color:#991b1b}
+    .checkbox{display:flex;align-items:center;gap:8px}
   </style>
 </head>
 <body>
@@ -50,17 +54,40 @@
           <input id="baseUrl" style="width:320px" placeholder="http://localhost:5100/" />
         </label>
       </div>
+
       <div class="col">
+        <div class="checkbox">
+          <input type="checkbox" id="useResolve" />
+          <label for="useResolve">Usar <code>/api/users/resolve</code> (dev, idempotente)</label>
+        </div>
+        <div class="small">Si <b>no</b> marcas esto, el <b>Join</b> solo busca usuario y NO crea. El <b>Register</b> crea y falla si ya existe.</div>
+      </div>
+    </div>
+
+    <!-- PASO 1: REGISTER -->
+    <div class="card split">
+      <div>
+        <h2>1) Registrar usuario</h2>
+        <label>Username:
+          <input id="regUsername" style="width:220px" placeholder="tu nombre" />
+        </label>
+        <button id="btnRegister">Registrar</button>
+        <div id="regMsg" class="small muted"></div>
+      </div>
+
+      <!-- PASO 2: JOIN -->
+      <div>
+        <h2>2) Unirse a sala (no crea usuario)</h2>
         <label>Sala (roomCode):
-          <input id="roomCode" style="width:160px" placeholder="12345" />
+          <input id="roomCode" style="width:120px" placeholder="12345" />
         </label>
         <label>Usuario:
-          <input id="username" style="width:160px" placeholder="tu nombre" />
+          <input id="username" style="width:160px" placeholder="tu nombre registrado" />
         </label>
         <button id="connect">Conectar</button>
         <button id="disconnect" disabled>Desconectar</button>
+        <div class="small" id="hint">Tip: si ya te registraste, el <b>userId</b> se guarda en localStorage por username.</div>
       </div>
-      <div class="col small" id="hint">Tip: tu usuario queda guardado en este navegador para reusar el <b>userId</b>.</div>
     </div>
 
     <div class="grid">
@@ -92,12 +119,11 @@
     </div>
   </div>
 
-  <!-- Cliente SignalR por CDN -->
+  <!-- Cliente SignalR (CDN recomendado en pruebas) -->
   <script src="./node_modules/@microsoft/signalr/dist/browser/signalr.min.js"></script>
   <script>
     // ====== CONFIG ======
-    // Ajusta esto a tu backend. Si dejas vacío el input, se usa esta constante.
-    const BACKEND_BASE = "https://kq9rld2l-7121.use2.devtunnels.ms"; // <- cámbialo si corresponde
+    const BACKEND_BASE = "https://zjnp9t33-7121.use2.devtunnels.ms"; // <- ajusta tu raíz de API (debe terminar con /)
 
     // ====== Helpers UI ======
     const $ = (id) => document.getElementById(id);
@@ -122,11 +148,16 @@
     const renderPlayers = (list=[]) => {
       playersEl.innerHTML = "";
       list.forEach(p => {
+        const name = p.username ?? p.Username ?? "(sin nombre)";
+        const order = p.seatOrder ?? p.SeatOrder ?? "?";
+        const owner = (p.isOwner ?? p.IsOwner) ? " • owner" : "";
         const li = document.createElement("li");
-        li.innerHTML = `<span>${p.Username}</span><span class="small muted">#${p.SeatOrder}${p.IsOwner ? " • owner":""}</span>`;
+        li.innerHTML = `<span>${escapeHtml(name)}</span><span class="small muted">#${order}${owner}</span>`;
         playersEl.appendChild(li);
       });
     };
+    const escapeHtml = s => (s||"").toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const linkify = s => (s||"").toString().replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
 
     // ====== Estado ======
     let connection = null;
@@ -149,10 +180,32 @@
       });
       if (!res.ok) {
         const txt = await res.text().catch(()=> "");
-        throw new Error(`No se pudo registrar el usuario. Prueba otro nombre. (${res.status}) ${txt}`);
+        throw new Error(`Registro falló (${res.status}). ${txt}`);
       }
       const data = await res.json();
-      return data.id || data.Id; // según tu controller devuelve { Id, Username }
+      return data.id || data.Id;
+    }
+
+    async function apiResolveUser(name) {
+      const res = await fetch(baseUrl + "api/users/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: name })
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(()=> "");
+        throw new Error(`Resolve falló (${res.status}). ${txt}`);
+      }
+      const data = await res.json();
+      return data.id || data.Id;
+    }
+
+    async function apiGetByUsername(name) {
+      const res = await fetch(baseUrl + "api/users/by-username/" + encodeURIComponent(name));
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`Lookup falló (${res.status})`);
+      const data = await res.json();
+      return { id: data.id || data.Id, username: data.username || data.Username };
     }
 
     async function apiGetMessages(roomCode, take=50) {
@@ -161,7 +214,6 @@
       return await res.json();
     }
 
-    // (Opcional) obtener jugadores vía REST si quieres al entrar
     async function apiGetPlayers(roomCode) {
       const res = await fetch(baseUrl + `api/rooms/${encodeURIComponent(roomCode)}/players`);
       if (!res.ok) return [];
@@ -186,42 +238,80 @@
       });
 
       connection.on("ChatMessage", m => {
-        const self = (m.UserId && userId && m.UserId.toLowerCase?.() === userId.toLowerCase?.());
-        addChat(`<b>${escapeHtml(m.Username)}:</b> ${linkify(escapeHtml(m.Text))}`, self ? "me" : "");
+        const uid   = m.userId   ?? m.UserId;
+        const uname = m.username ?? m.Username ?? "user";
+        const text  = m.text     ?? m.Text     ?? "";
+        const self = (uid && userId && uid.toLowerCase?.() === userId.toLowerCase?.());
+        addChat(`<b>${escapeHtml(uname)}:</b> ${linkify(escapeHtml(text))}`, self ? "me" : "");
       });
 
+
       connection.on("ChatHistory", arr => {
-        (arr || []).forEach(m => addChat(
-          `<span class="muted">(hist)</span> <b>${escapeHtml(m.Username)}:</b> ${linkify(escapeHtml(m.Text))}`
-        ));
+        (arr || []).forEach(m => {
+          const uname = m.username ?? m.Username ?? "user";
+          const text  = m.text     ?? m.Text     ?? "";
+          addChat(`<span class="muted">(hist)</span> <b>${escapeHtml(uname)}:</b> ${linkify(escapeHtml(text))}`);
+        });
       });
+
 
       connection.onreconnecting(() => { setStatus("reconectando…",""); signalsEl.textContent = "reconectando…"; });
       connection.onreconnected(() => { setStatus("conectado","ok"); signalsEl.textContent = "ok"; });
       connection.onclose(err => { setStatus("desconectado",""); signalsEl.textContent = err?.message || "cerrado"; });
     }
 
-    function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-    function linkify(s){ return s.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>'); }
+    // ====== Acciones: REGISTER (paso 1) ======
+    $("btnRegister").onclick = async () => {
+      try {
+        baseUrl = $("baseUrl").value.trim() || BACKEND_BASE;
+        if (!baseUrl.endsWith("/")) baseUrl += "/";
+        const name = $("regUsername").value.trim();
+        if (!name) return alert("Ingresa un username para registrar");
 
-    // ====== Botones ======
+        // Registro estricto (falla si existe)
+        const id = await apiRegisterUser(name);
+        storeUserId(name, id);
+        $("regMsg").textContent = `✅ Registrado: ${name} (${id})`;
+        $("regMsg").className = "small ok";
+        // Copia al campo de join
+        $("username").value = name;
+      } catch (e) {
+        $("regMsg").textContent = "❌ " + (e?.message || e);
+        $("regMsg").className = "small err";
+      }
+    };
+
+    // ====== Acciones: JOIN (paso 2) ======
     $("connect").onclick = async () => {
       try {
-        // Lee inputs o defaults
         baseUrl = $("baseUrl").value.trim() || BACKEND_BASE;
         if (!baseUrl.endsWith("/")) baseUrl += "/";
         roomCode = $("roomCode").value.trim() || "12345";
-        username = $("username").value.trim() || "guest";
+        username = $("username").value.trim();
+        if (!username) return alert("Ingresa tu username (ya registrado)");
 
         setStatus("conectando…"); log("Conectando a " + baseUrl);
 
-        // userId: reusar si existe por username, si no, registrar
+        // userId: usar localStorage si existe; si no, según la opción elegida:
         let stored = getStoredUserId(username);
         if (!stored) {
-          const id = await apiRegisterUser(username);
-          storeUserId(username, id);
-          stored = id;
-          log(`Usuario registrado: ${username} (${id})`, "ok");
+          if ($("useResolve").checked) {
+            // DEV idempotente
+            const id = await apiResolveUser(username);
+            storeUserId(username, id);
+            stored = id;
+            log(`Resolve OK: ${username} (${id})`, "ok");
+          } else {
+            // Estricto: lookup (NO crea)
+            const found = await apiGetByUsername(username);
+            if (!found) {
+              setStatus("error","err");
+              throw new Error("Usuario no existe. Ve a 'Registrar usuario'.");
+            }
+            stored = found.id;
+            storeUserId(username, stored);
+            log(`Lookup OK: ${username} (${stored})`, "ok");
+          }
         } else {
           log(`Usuario reusado: ${username} (${stored})`, "ok");
         }
@@ -229,7 +319,7 @@
 
         // Construir conexión
         connection = new signalR.HubConnectionBuilder()
-          .withUrl(baseUrl + "hubs/game", { withCredentials: true }) // respeta CORS con credenciales
+          .withUrl(baseUrl + "hubs/game", { withCredentials: true })
           .withAutomaticReconnect()
           .build();
 
@@ -240,14 +330,14 @@
         setStatus("conectado", "ok");
         log("Conectado al Hub ✔", "ok");
 
-        // Unirse a la sala en el Hub (esto también valida en tu RoomService que el user esté en la sala)
+        // Unirse a la sala
         await connection.invoke("JoinRoom", roomCode, userId, username);
 
-        // (Opcional) snapshot jugadores por REST
+        // Snapshot jugadores por REST
         const players = await apiGetPlayers(roomCode);
         renderPlayers(players || []);
 
-        // Cargar histórico de chat (además el Hub enviará "ChatHistory" al Caller si lo implementaste igual)
+        // Histórico de chat (además el Hub enviará "ChatHistory" al Caller)
         const hist = await apiGetMessages(roomCode, 50);
         (hist || []).forEach(m => addChat(
           `<span class="muted">(hist)</span> <b>${escapeHtml(m.username || m.Username || "user")}:</b> ${linkify(escapeHtml(m.text || m.Text || ""))}`
@@ -264,11 +354,7 @@
     };
 
     $("disconnect").onclick = async () => {
-      try {
-        if (connection && roomCode) {
-          await connection.invoke("LeaveRoom", roomCode);
-        }
-      } catch {}
+      try { if (connection && roomCode) await connection.invoke("LeaveRoom", roomCode); } catch {}
       try { if (connection) await connection.stop(); } catch {}
       connection = null;
       $("send").disabled = true;
@@ -300,9 +386,12 @@
     window.addEventListener("DOMContentLoaded", () => {
       $("baseUrl").value = BACKEND_BASE;
       $("roomCode").value = "12345";
-      $("username").value = "guest";
+      $("username").value = "";
+      $("regUsername").value = "";
       setStatus("desconectado");
     });
   </script>
 </body>
 </html>
+
+ 
