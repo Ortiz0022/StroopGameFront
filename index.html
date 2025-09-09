@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>StroobGame – Salas + Chat (SignalR)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bg:#0f172a; --card:#111827; --muted:#9ca3af; --text:#e5e7eb; --accent:#22c55e; }
+    *{box-sizing:border-box} body{margin:0;background:linear-gradient(180deg,#0b1220,#0f172a);}
+    body,button,input{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    .wrap{max-width:1100px;margin:24px auto;padding:0 16px;color:var(--text)}
+    .row{display:flex;gap:16px;flex-wrap:wrap}
+    .card{background:linear-gradient(180deg,#0b1220, #111827); border:1px solid #1f2937; border-radius:16px; padding:16px; box-shadow:0 8px 24px rgba(0,0,0,.25)}
+    .col{flex:1 1 320px}
+    h1{margin:0 0 8px;font-size:20px;font-weight:700}
+    label{display:inline-block;margin:8px 12px 8px 0;color:var(--muted);font-size:14px}
+    input{background:#0b1220;border:1px solid #253044;color:var(--text);padding:8px 10px;border-radius:10px}
+    input::placeholder{color:#64748b}
+    button{background:var(--accent);border:0;color:#052e16;padding:10px 14px;border-radius:10px;font-weight:700;cursor:pointer}
+    button[disabled]{opacity:.5;cursor:not-allowed}
+    .grid{display:grid;grid-template-columns:260px 1fr;gap:16px}
+    .pane{height:520px;display:flex;flex-direction:column}
+    .list{flex:1;overflow:auto;border:1px solid #223046;border-radius:12px;padding:10px;background:#0b1220}
+    .item{padding:8px 10px;border-bottom:1px dashed #1e293b}
+    .item:last-child{border-bottom:0}
+    .muted{color:#94a3b8}
+    .me{background:#0f1a2b;border-radius:10px;padding:8px}
+    .sys{color:#f4d03f}
+    .msgline{display:flex;gap:8px;margin-top:12px}
+    .msgline input{flex:1}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid #334155;border-radius:999px;font-size:12px;color:#9ca3af}
+    .rowgap{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .small{font-size:12px;color:#94a3b8}
+    .ok{color:#22c55e}
+    .err{color:#ef4444}
+    .players li{margin:0;padding:6px 8px;border-bottom:1px dashed #1e293b;display:flex;justify-content:space-between}
+    .players li:last-child{border-bottom:0}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card rowgap">
+      <h1>StroobGame • Salas + Chat</h1>
+      <span class="pill" id="status">desconectado</span>
+    </div>
+
+    <div class="card row">
+      <div class="col">
+        <label>Backend:
+          <input id="baseUrl" style="width:320px" placeholder="http://localhost:5100/" />
+        </label>
+      </div>
+      <div class="col">
+        <label>Sala (roomCode):
+          <input id="roomCode" style="width:160px" placeholder="12345" />
+        </label>
+        <label>Usuario:
+          <input id="username" style="width:160px" placeholder="tu nombre" />
+        </label>
+        <button id="connect">Conectar</button>
+        <button id="disconnect" disabled>Desconectar</button>
+      </div>
+      <div class="col small" id="hint">Tip: tu usuario queda guardado en este navegador para reusar el <b>userId</b>.</div>
+    </div>
+
+    <div class="grid">
+      <!-- Panel izquierdo: jugadores y acciones -->
+      <div class="card pane">
+        <h1>Jugadores</h1>
+        <ul id="players" class="list players" aria-live="polite"></ul>
+        <div class="small" style="margin-top:8px">Señales: <span id="signals" class="muted">—</span></div>
+      </div>
+
+      <!-- Panel derecho: chat -->
+      <div class="card pane">
+        <div class="rowgap" style="justify-content:space-between">
+          <h1>Chat</h1>
+          <span id="connId" class="small muted"></span>
+        </div>
+        <div id="chat" class="list" aria-live="polite"></div>
+
+        <div class="msgline">
+          <input id="msg" placeholder="Escribe un mensaje…" maxlength="400" />
+          <button id="send" disabled>Enviar</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card small">
+      <b>Logs:</b>
+      <div id="log" class="list" style="height:160px"></div>
+    </div>
+  </div>
+
+  <!-- Cliente SignalR por CDN -->
+  <script src="./node_modules/@microsoft/signalr/dist/browser/signalr.min.js"></script>
+  <script>
+    // ====== CONFIG ======
+    // Ajusta esto a tu backend. Si dejas vacío el input, se usa esta constante.
+    const BACKEND_BASE = "https://kq9rld2l-7121.use2.devtunnels.ms"; // <- cámbialo si corresponde
+
+    // ====== Helpers UI ======
+    const $ = (id) => document.getElementById(id);
+    const statusEl = $("status"), playersEl = $("players"),
+          chatEl = $("chat"), signalsEl = $("signals"), logEl = $("log"), connIdEl = $("connId");
+
+    const setStatus = (txt, cls="") => { statusEl.textContent = txt; statusEl.className = "pill " + cls; };
+    const log = (msg, cls="") => {
+      const div = document.createElement("div");
+      div.className = "item " + cls;
+      div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+    };
+    const addChat = (html, className = "") => {
+      const div = document.createElement("div");
+      div.className = "item " + className;
+      div.innerHTML = html;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    };
+    const renderPlayers = (list=[]) => {
+      playersEl.innerHTML = "";
+      list.forEach(p => {
+        const li = document.createElement("li");
+        li.innerHTML = `<span>${p.Username}</span><span class="small muted">#${p.SeatOrder}${p.IsOwner ? " • owner":""}</span>`;
+        playersEl.appendChild(li);
+      });
+    };
+
+    // ====== Estado ======
+    let connection = null;
+    let baseUrl = "";
+    let userId = null;
+    let username = null;
+    let roomCode = null;
+
+    // localStorage keys por username
+    const userKey = (name) => `stroob_user_${name}`;
+    const getStoredUserId = (name) => localStorage.getItem(userKey(name));
+    const storeUserId = (name, id) => localStorage.setItem(userKey(name), id);
+
+    // ====== API REST ======
+    async function apiRegisterUser(name) {
+      const res = await fetch(baseUrl + "api/users/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: name })
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(()=> "");
+        throw new Error(`No se pudo registrar el usuario. Prueba otro nombre. (${res.status}) ${txt}`);
+      }
+      const data = await res.json();
+      return data.id || data.Id; // según tu controller devuelve { Id, Username }
+    }
+
+    async function apiGetMessages(roomCode, take=50) {
+      const res = await fetch(baseUrl + `api/rooms/${encodeURIComponent(roomCode)}/messages?take=${take}`);
+      if (!res.ok) return [];
+      return await res.json();
+    }
+
+    // (Opcional) obtener jugadores vía REST si quieres al entrar
+    async function apiGetPlayers(roomCode) {
+      const res = await fetch(baseUrl + `api/rooms/${encodeURIComponent(roomCode)}/players`);
+      if (!res.ok) return [];
+      return await res.json();
+    }
+
+    // ====== SignalR wiring ======
+    function bindSignalREvents() {
+      connection.on("UserJoined", p => {
+        addChat(`🟢 <span class="sys">${escapeHtml(p.username)}</span> entró a la sala`, "sys");
+        log(`Entró: ${p.username}`);
+      });
+
+      connection.on("UserLeft", p => {
+        addChat(`🟡 <span class="sys">${escapeHtml(p.username)}</span> salió de la sala`, "sys");
+        log(`Salió: ${p.username}`);
+      });
+
+      connection.on("RoomUpdated", s => {
+        renderPlayers(s.Players || []);
+        log(`RoomUpdated (${(s.Players||[]).length} jugadores)`);
+      });
+
+      connection.on("ChatMessage", m => {
+        const self = (m.UserId && userId && m.UserId.toLowerCase?.() === userId.toLowerCase?.());
+        addChat(`<b>${escapeHtml(m.Username)}:</b> ${linkify(escapeHtml(m.Text))}`, self ? "me" : "");
+      });
+
+      connection.on("ChatHistory", arr => {
+        (arr || []).forEach(m => addChat(
+          `<span class="muted">(hist)</span> <b>${escapeHtml(m.Username)}:</b> ${linkify(escapeHtml(m.Text))}`
+        ));
+      });
+
+      connection.onreconnecting(() => { setStatus("reconectando…",""); signalsEl.textContent = "reconectando…"; });
+      connection.onreconnected(() => { setStatus("conectado","ok"); signalsEl.textContent = "ok"; });
+      connection.onclose(err => { setStatus("desconectado",""); signalsEl.textContent = err?.message || "cerrado"; });
+    }
+
+    function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function linkify(s){ return s.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>'); }
+
+    // ====== Botones ======
+    $("connect").onclick = async () => {
+      try {
+        // Lee inputs o defaults
+        baseUrl = $("baseUrl").value.trim() || BACKEND_BASE;
+        if (!baseUrl.endsWith("/")) baseUrl += "/";
+        roomCode = $("roomCode").value.trim() || "12345";
+        username = $("username").value.trim() || "guest";
+
+        setStatus("conectando…"); log("Conectando a " + baseUrl);
+
+        // userId: reusar si existe por username, si no, registrar
+        let stored = getStoredUserId(username);
+        if (!stored) {
+          const id = await apiRegisterUser(username);
+          storeUserId(username, id);
+          stored = id;
+          log(`Usuario registrado: ${username} (${id})`, "ok");
+        } else {
+          log(`Usuario reusado: ${username} (${stored})`, "ok");
+        }
+        userId = stored;
+
+        // Construir conexión
+        connection = new signalR.HubConnectionBuilder()
+          .withUrl(baseUrl + "hubs/game", { withCredentials: true }) // respeta CORS con credenciales
+          .withAutomaticReconnect()
+          .build();
+
+        bindSignalREvents();
+
+        await connection.start();
+        connIdEl.textContent = "connId: " + (connection.connectionId || "(n/a)");
+        setStatus("conectado", "ok");
+        log("Conectado al Hub ✔", "ok");
+
+        // Unirse a la sala en el Hub (esto también valida en tu RoomService que el user esté en la sala)
+        await connection.invoke("JoinRoom", roomCode, userId, username);
+
+        // (Opcional) snapshot jugadores por REST
+        const players = await apiGetPlayers(roomCode);
+        renderPlayers(players || []);
+
+        // Cargar histórico de chat (además el Hub enviará "ChatHistory" al Caller si lo implementaste igual)
+        const hist = await apiGetMessages(roomCode, 50);
+        (hist || []).forEach(m => addChat(
+          `<span class="muted">(hist)</span> <b>${escapeHtml(m.username || m.Username || "user")}:</b> ${linkify(escapeHtml(m.text || m.Text || ""))}`
+        ));
+
+        $("send").disabled = false;
+        $("disconnect").disabled = false;
+        $("connect").disabled = true;
+      } catch (e) {
+        setStatus("error", "err");
+        log("❌ " + (e?.message || e), "err");
+        alert("Error al conectar: " + (e?.message || e));
+      }
+    };
+
+    $("disconnect").onclick = async () => {
+      try {
+        if (connection && roomCode) {
+          await connection.invoke("LeaveRoom", roomCode);
+        }
+      } catch {}
+      try { if (connection) await connection.stop(); } catch {}
+      connection = null;
+      $("send").disabled = true;
+      $("disconnect").disabled = true;
+      $("connect").disabled = false;
+      setStatus("desconectado");
+      log("Desconectado");
+    };
+
+    $("send").onclick = async () => {
+      const t = $("msg").value.trim();
+      if (!t || !connection) return;
+      try {
+        await connection.invoke("SendChat", roomCode, userId, t);
+        $("msg").value = "";
+      } catch (e) {
+        log("❌ No se pudo enviar: " + (e?.message || e), "err");
+      }
+    };
+
+    // Enter para enviar
+    $("msg").addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault(); $("send").click();
+      }
+    });
+
+    // Prefill de conveniencia
+    window.addEventListener("DOMContentLoaded", () => {
+      $("baseUrl").value = BACKEND_BASE;
+      $("roomCode").value = "12345";
+      $("username").value = "guest";
+      setStatus("desconectado");
+    });
+  </script>
+</body>
+</html>
