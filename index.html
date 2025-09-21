@@ -2,499 +2,126 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>StroobGame – Salas + Chat (SignalR)</title>
+  <title>StroobGame • Salas + Chat + Juego</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root { --bg:#0f172a; --card:#111827; --muted:#9ca3af; --text:#e5e7eb; --accent:#22c55e; --warn:#ef4444; }
-    *{box-sizing:border-box} body{margin:0;background:linear-gradient(180deg,#0b1220,#0f172a);}
-    body,button,input{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
-    .wrap{max-width:1100px;margin:24px auto;padding:0 16px;color:var(--text)}
-    .row{display:flex;gap:16px;flex-wrap:wrap}
-    .card{background:linear-gradient(180deg,#0b1220, #111827); border:1px solid #1f2937; border-radius:16px; padding:16px; box-shadow:0 8px 24px rgba(0,0,0,.25)}
-    .col{flex:1 1 320px}
-    h1{margin:0 0 8px;font-size:20px;font-weight:700}
-    h2{margin:0 0 8px;font-size:16px;font-weight:700;color:#cbd5e1}
-    label{display:inline-block;margin:8px 12px 8px 0;color:var(--muted);font-size:14px}
-    input{background:#0b1220;border:1px solid #253044;color:var(--text);padding:8px 10px;border-radius:10px}
-    input::placeholder{color:#64748b}
-    button{background:var(--accent);border:0;color:#052e16;padding:10px 14px;border-radius:10px;font-weight:700;cursor:pointer}
-    button[disabled]{opacity:.5;cursor:not-allowed}
-    .grid{display:grid;grid-template-columns:260px 1fr;gap:16px}
-    .pane{height:520px;display:flex;flex-direction:column}
-    .list{flex:1;overflow:auto;border:1px solid #223046;border-radius:12px;padding:10px;background:#0b1220}
-    .item{padding:8px 10px;border-bottom:1px dashed #1e293b}
-    .item:last-child{border-bottom:0}
-    .muted{color:#94a3b8}
-    .me{background:#0f1a2b;border-radius:10px;padding:8px}
-    .sys{color:#f4d03f}
-    .msgline{display:flex;gap:8px;margin-top:12px}
-    .msgline input{flex:1}
-    .pill{display:inline-block;padding:2px 8px;border:1px solid #334155;border-radius:999px;font-size:12px;color:#9ca3af}
-    .rowgap{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-    .small{font-size:12px;color:#94a3b8}
-    .ok{color:#22c55e}
-    .err{color:var(--warn)}
-    .players li{margin:0;padding:6px 8px;border-bottom:1px dashed #1e293b;display:flex;justify-content:space-between}
-    .players li:last-child{border-bottom:0}
-    .split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-    .danger{background:#7f1d1d;color:#fecaca;border-color:#991b1b}
-    .checkbox{display:flex;align-items:center;gap:8px}
-  </style>
+  <link rel="stylesheet" href="./game.css" />
 </head>
 <body>
   <div class="wrap">
-    <div class="card rowgap">
-      <h1>StroobGame • Salas + Chat</h1>
-      <span class="pill" id="status">desconectado</span>
+    <!-- Header -->
+    <div class="card row" style="align-items:center;justify-content:space-between">
+      <h1>StroobGame • Salas + Chat + Juego</h1>
+      <span class="pill" id="connStatus">desconectado</span>
+      <span class="pill" id="loginStatus">sin login</span>
     </div>
 
-    <div class="card row">
-      <div class="col">
+    <!-- Backend -->
+    <div class="card">
+      <div class="row" style="align-items:center">
         <label>Backend:
-          <input id="baseUrl" style="width:320px" placeholder="http://localhost:5100/" />
+          <input id="baseUrl" style="width:360px" placeholder="https://1n21m23q-7121.use2.devtunnels.ms/" />
         </label>
-      </div>
-
-      <div class="col">
-        <div class="checkbox">
-          <input type="checkbox" id="useResolve" />
-          <label for="useResolve">Usar <code>/api/users/resolve</code> (dev, idempotente)</label>
-        </div>
-        <div class="small">Si <b>no</b> marcas esto, el <b>Join</b> solo busca usuario y NO crea. El <b>Register</b> crea y falla si ya existe.</div>
+        <div class="small">Debe terminar con <code>/</code></div>
       </div>
     </div>
 
-    <!-- PASO 1: REGISTER -->
-    <div class="card split">
+    <!-- Login / Crear sala / Join -->
+    <div class="card split-3">
       <div>
-        <h2>1) Registrar usuario</h2>
-        <label>Username:
-          <input id="regUsername" style="width:220px" placeholder="tu nombre" />
+        <h2>1) Login (si no existe lo crea)</h2>
+        <label>Usuario:
+          <input id="loginUsername" style="width:220px" placeholder="tu nombre" />
         </label>
-        <button id="btnRegister">Registrar</button>
-        <div id="regMsg" class="small muted"></div>
+        <button id="btnLogin">Iniciar sesión</button>
+        <div id="loginMsg" class="small muted"></div>
       </div>
 
-      <!-- PASO 2.5: CREAR SALA -->
-      <div class="card">
-        <h2>Crear sala</h2>
-        <div class="row" style="align-items:center;gap:12px;">
-          <label>Usuario creador:
-            <input id="creatorUsername" style="width:220px" placeholder="tu nombre (existente)" />
-          </label>
-          <button id="btnCreateRoom">Crear sala</button>
-
-          <span class="small">RoomCode: <b id="createdCode">—</b></span>
-          <button id="btnCopyCode" style="display:none;">Copiar código</button>
-
-          <label class="checkbox" style="margin-left:8px;">
-            <input type="checkbox" id="autoJoin" checked />
-            <span>Unirme automáticamente</span>
-          </label>
-        </div>
-        <div id="createMsg" class="small muted"></div>
-      </div>
-
-      <!-- PASO 2: JOIN -->
       <div>
-        <h2>2) Unirse a sala (no crea usuario)</h2>
-        <label>Sala (roomCode):
+        <h2>2) Crear sala</h2>
+        <button id="btnCreateRoom">Crear sala (owner = usuario logueado)</button>
+        <div class="small">Código creado: <b id="createdCode">—</b></div>
+      </div>
+
+      <div>
+        <h2>3) Unirse a sala</h2>
+        <label>RoomCode:
           <input id="roomCode" style="width:120px" placeholder="12345" />
         </label>
-        <label>Usuario:
-          <input id="username" style="width:160px" placeholder="tu nombre registrado" />
-        </label>
-        <button id="connect">Conectar</button>
-        <button id="disconnect" disabled>Desconectar</button>
-        <div class="small" id="hint">Tip: si ya te registraste, el <b>userId</b> se guarda en localStorage por username.</div>
+        <button id="btnConnect" disabled>Conectar</button>
+        <button id="btnDisconnect" disabled>Desconectar</button>
       </div>
     </div>
 
-    <div class="grid">
-      <!-- Panel izquierdo: jugadores y acciones -->
-      <div class="card pane">
-        <h1>Jugadores</h1>
-        <ul id="players" class="list players" aria-live="polite"></ul>
-        <div class="small" style="margin-top:8px">Señales: <span id="signals" class="muted">—</span></div>
+    <!-- Zona de juego + acciones -->
+    <div class="card">
+      <div class="row" style="align-items:center;justify-content:space-between">
+        <h2>Juego (Stroop por turnos)</h2>
+        <div class="row" style="gap:8px;align-items:center">
+          <label>Rondas por jugador:
+            <input id="roundsPerPlayer" type="number" min="1" max="10" value="4" style="width:70px" />
+          </label>
+          <button id="btnStartGame" disabled>Iniciar juego (owner)</button>
+          <span class="pill" id="turnInfo">sin juego</span>
+        </div>
       </div>
 
-      <!-- Panel derecho: chat -->
-      <div class="card pane">
-        <div class="rowgap" style="justify-content:space-between">
-          <h1>Chat</h1>
-          <span id="connId" class="small muted"></span>
-        </div>
-        <div id="chat" class="list" aria-live="polite"></div>
+      <!-- UI del round -->
+      <div id="gameArea" class="game hidden">
+        <div class="word" id="wordText">—</div>
+        <div class="subtitle">Selecciona el color que <u>dice</u> la palabra</div>
 
+        <div class="options">
+          <button class="color-card" id="opt1" disabled></button>
+          <button class="color-card" id="opt2" disabled></button>
+        </div>
+
+        <div class="row small" style="justify-content:space-between;margin-top:8px">
+          <div>Te quedan: <b id="remaining">—</b> rondas en tu turno</div>
+          <div>Tiempo (última respuesta): <b id="lastTime">—</b> ms</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Layout dos columnas: jugadores / chat -->
+    <div class="grid">
+      <!-- Jugadores y scoreboard en sala -->
+      <div class="card pane">
+        <h2>Jugadores</h2>
+        <ul id="players" class="list players"></ul>
+        <h3 style="margin-top:12px">Marcador (sala)</h3>
+        <div id="scoreboard" class="list" style="height:180px"></div>
+        <div class="small">connId: <span id="connId" class="muted">—</span></div>
+      </div>
+
+      <!-- Chat -->
+      <div class="card pane">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h2>Chat</h2>
+          <div class="small">Ranking global</div>
+        </div>
+        <div class="list" id="chat"></div>
         <div class="msgline">
           <input id="msg" placeholder="Escribe un mensaje…" maxlength="400" />
-          <button id="send" disabled>Enviar</button>
+          <button id="btnSend" disabled>Enviar</button>
         </div>
       </div>
     </div>
 
+    <!-- Ranking global -->
+    <div class="card">
+      <h2>Ranking global</h2>
+      <div id="ranking" class="list" style="height:160px"></div>
+    </div>
+
+    <!-- Logs -->
     <div class="card small">
       <b>Logs:</b>
       <div id="log" class="list" style="height:160px"></div>
     </div>
   </div>
 
-  <!-- Cliente SignalR (CDN recomendado en pruebas) -->
+  <!-- SignalR -->
   <script src="./node_modules/@microsoft/signalr/dist/browser/signalr.min.js"></script>
-  <script>
-    // ====== CONFIG ======
-    const BACKEND_BASE = "https://zjnp9t33-7121.use2.devtunnels.ms"; // <- ajusta tu raíz de API (debe terminar con /)
-
-    // ====== Helpers UI ======
-    const $ = (id) => document.getElementById(id);
-    const statusEl = $("status"), playersEl = $("players"),
-          chatEl = $("chat"), signalsEl = $("signals"), logEl = $("log"), connIdEl = $("connId");
-
-    const setStatus = (txt, cls="") => { statusEl.textContent = txt; statusEl.className = "pill " + cls; };
-    const log = (msg, cls="") => {
-      const div = document.createElement("div");
-      div.className = "item " + cls;
-      div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-      logEl.appendChild(div);
-      logEl.scrollTop = logEl.scrollHeight;
-    };
-    const addChat = (html, className = "") => {
-      const div = document.createElement("div");
-      div.className = "item " + className;
-      div.innerHTML = html;
-      chatEl.appendChild(div);
-      chatEl.scrollTop = chatEl.scrollHeight;
-    };
-    const renderPlayers = (list=[]) => {
-      playersEl.innerHTML = "";
-      list.forEach(p => {
-        const name = p.username ?? p.Username ?? "(sin nombre)";
-        const order = p.seatOrder ?? p.SeatOrder ?? "?";
-        const owner = (p.isOwner ?? p.IsOwner) ? " • owner" : "";
-        const li = document.createElement("li");
-        li.innerHTML = `<span>${escapeHtml(name)}</span><span class="small muted">#${order}${owner}</span>`;
-        playersEl.appendChild(li);
-      });
-    };
-    const escapeHtml = s => (s||"").toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const linkify = s => (s||"").toString().replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
-
-    // ====== Estado ======
-    let connection = null;
-    let baseUrl = "";
-    let userId = null;
-    let username = null;
-    let roomCode = null;
-
-    // localStorage keys por username
-    const userKey = (name) => `stroob_user_${name}`;
-    const getStoredUserId = (name) => localStorage.getItem(userKey(name));
-    const storeUserId = (name, id) => localStorage.setItem(userKey(name), id);
-
-    // ====== API REST ======
-    // ====== API: crear sala ======
-      async function apiCreateRoom(creatorUserId) {
-        // Tu controller espera el GUID crudo en el body, ej: "0000-..."
-        const res = await fetch(baseUrl + "api/rooms", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(creatorUserId) // GUID como string entre comillas
-        });
-        if (!res.ok) {
-          const txt = await res.text().catch(()=> "");
-          throw new Error(`No se pudo crear la sala (${res.status}). ${txt}`);
-        }
-        const data = await res.json();
-        // Devuelve { Id/Code/... } o { id/code/... } según naming policy
-        return {
-          id:  data.id  ?? data.Id,
-          code:data.code?? data.Code,
-          min: data.minPlayers ?? data.MinPlayers,
-          max: data.maxPlayers ?? data.MaxPlayers
-        };
-      }
-
-    async function apiRegisterUser(name) {
-      const res = await fetch(baseUrl + "api/users/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: name })
-      });
-      if (!res.ok) {
-        const txt = await res.text().catch(()=> "");
-        throw new Error(`Registro falló (${res.status}). ${txt}`);
-      }
-      const data = await res.json();
-      return data.id || data.Id;
-    }
-
-    async function apiResolveUser(name) {
-      const res = await fetch(baseUrl + "api/users/resolve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: name })
-      });
-      if (!res.ok) {
-        const txt = await res.text().catch(()=> "");
-        throw new Error(`Resolve falló (${res.status}). ${txt}`);
-      }
-      const data = await res.json();
-      return data.id || data.Id;
-    }
-
-    async function apiGetByUsername(name) {
-      const res = await fetch(baseUrl + "api/users/by-username/" + encodeURIComponent(name));
-      if (res.status === 404) return null;
-      if (!res.ok) throw new Error(`Lookup falló (${res.status})`);
-      const data = await res.json();
-      return { id: data.id || data.Id, username: data.username || data.Username };
-    }
-
-    async function apiGetMessages(roomCode, take=50) {
-      const res = await fetch(baseUrl + `api/rooms/${encodeURIComponent(roomCode)}/messages?take=${take}`);
-      if (!res.ok) return [];
-      return await res.json();
-    }
-
-    async function apiGetPlayers(roomCode) {
-      const res = await fetch(baseUrl + `api/rooms/${encodeURIComponent(roomCode)}/players`);
-      if (!res.ok) return [];
-      return await res.json();
-    }
-
-    // ====== SignalR wiring ======
-    function bindSignalREvents() {
-      connection.on("UserJoined", p => {
-        addChat(`🟢 <span class="sys">${escapeHtml(p.username)}</span> entró a la sala`, "sys");
-        log(`Entró: ${p.username}`);
-      });
-
-      connection.on("UserLeft", p => {
-        addChat(`🟡 <span class="sys">${escapeHtml(p.username)}</span> salió de la sala`, "sys");
-        log(`Salió: ${p.username}`);
-      });
-
-      connection.on("RoomUpdated", s => {
-        renderPlayers(s.Players || []);
-        log(`RoomUpdated (${(s.Players||[]).length} jugadores)`);
-      });
-
-      connection.on("ChatMessage", m => {
-        const uid   = m.userId   ?? m.UserId;
-        const uname = m.username ?? m.Username ?? "user";
-        const text  = m.text     ?? m.Text     ?? "";
-        const self = (uid && userId && uid.toLowerCase?.() === userId.toLowerCase?.());
-        addChat(`<b>${escapeHtml(uname)}:</b> ${linkify(escapeHtml(text))}`, self ? "me" : "");
-      });
-
-
-      connection.on("ChatHistory", arr => {
-        (arr || []).forEach(m => {
-          const uname = m.username ?? m.Username ?? "user";
-          const text  = m.text     ?? m.Text     ?? "";
-          addChat(`<span class="muted">(hist)</span> <b>${escapeHtml(uname)}:</b> ${linkify(escapeHtml(text))}`);
-        });
-      });
-
-
-      connection.onreconnecting(() => { setStatus("reconectando…",""); signalsEl.textContent = "reconectando…"; });
-      connection.onreconnected(() => { setStatus("conectado","ok"); signalsEl.textContent = "ok"; });
-      connection.onclose(err => { setStatus("desconectado",""); signalsEl.textContent = err?.message || "cerrado"; });
-    }
-
-    // ====== Acciones: REGISTER (paso 1) ======
-    $("btnRegister").onclick = async () => {
-      try {
-        baseUrl = $("baseUrl").value.trim() || BACKEND_BASE;
-        if (!baseUrl.endsWith("/")) baseUrl += "/";
-        const name = $("regUsername").value.trim();
-        if (!name) return alert("Ingresa un username para registrar");
-
-        // Registro estricto (falla si existe)
-        const id = await apiRegisterUser(name);
-        storeUserId(name, id);
-        $("regMsg").textContent = `✅ Registrado: ${name} (${id})`;
-        $("regMsg").className = "small ok";
-        // Copia al campo de join
-        $("username").value = name;
-      } catch (e) {
-        $("regMsg").textContent = "❌ " + (e?.message || e);
-        $("regMsg").className = "small err";
-      }
-    };
-
-    $("btnCreateRoom").onclick = async () => {
-  const out = $("createMsg");
-  try {
-    // Base URL
-    baseUrl = $("baseUrl").value.trim() || BACKEND_BASE;
-    if (!baseUrl.endsWith("/")) baseUrl += "/";
-
-    // Username creador: usa #creatorUsername si viene, sino #username
-    const name = ($("creatorUsername").value.trim() || $("username").value.trim());
-    if (!name) { alert("Indica el usuario creador (debe existir)."); return; }
-
-    // Conseguir/crear userId según el modo (igual que en Join)
-    let id = getStoredUserId(name);
-    if (!id) {
-      if ($("useResolve").checked) {
-        id = await apiResolveUser(name);  // idempotente en dev
-      } else {
-        const found = await apiGetByUsername(name); // lookup estricto
-        if (!found) throw new Error("El usuario no existe. Primero registra el usuario.");
-        id = found.id;
-      }
-      storeUserId(name, id);
-    }
-
-    // Crear sala
-    const room = await apiCreateRoom(id);
-
-    // Mostrar código + llenar inputs de Join
-    $("createdCode").textContent = room.code;
-    $("btnCopyCode").style.display = "inline-block";
-    $("roomCode").value = room.code;
-    $("username").value = name;
-
-    out.textContent = `✅ Sala creada (Code: ${room.code}, Jugadores ${room.min}–${room.max})`;
-    out.className = "small ok";
-
-    // Auto-join si está marcado
-    if ($("autoJoin").checked) {
-      // Simular click de "Conectar" (usará #roomCode y #username ya seteados)
-      $("connect").click();
-    }
-  } catch (e) {
-    out.textContent = "❌ " + (e?.message || e);
-    out.className = "small err";
-  }
-};
-
-// Copiar código
-$("btnCopyCode").onclick = async () => {
-  const code = $("createdCode").textContent || "";
-  if (!code || code === "—") return;
-  try {
-    await navigator.clipboard.writeText(code);
-    $("createMsg").textContent = "📋 Código copiado";
-    $("createMsg").className = "small ok";
-  } catch {
-    $("createMsg").textContent = "No se pudo copiar, copia manualmente.";
-    $("createMsg").className = "small err";
-  }
-};
-
-    // ====== Acciones: JOIN (paso 2) ======
-    $("connect").onclick = async () => {
-      try {
-        baseUrl = $("baseUrl").value.trim() || BACKEND_BASE;
-        if (!baseUrl.endsWith("/")) baseUrl += "/";
-        roomCode = $("roomCode").value.trim() || "12345";
-        username = $("username").value.trim();
-        if (!username) return alert("Ingresa tu username (ya registrado)");
-
-        setStatus("conectando…"); log("Conectando a " + baseUrl);
-
-        // userId: usar localStorage si existe; si no, según la opción elegida:
-        let stored = getStoredUserId(username);
-        if (!stored) {
-          if ($("useResolve").checked) {
-            // DEV idempotente
-            const id = await apiResolveUser(username);
-            storeUserId(username, id);
-            stored = id;
-            log(`Resolve OK: ${username} (${id})`, "ok");
-          } else {
-            // Estricto: lookup (NO crea)
-            const found = await apiGetByUsername(username);
-            if (!found) {
-              setStatus("error","err");
-              throw new Error("Usuario no existe. Ve a 'Registrar usuario'.");
-            }
-            stored = found.id;
-            storeUserId(username, stored);
-            log(`Lookup OK: ${username} (${stored})`, "ok");
-          }
-        } else {
-          log(`Usuario reusado: ${username} (${stored})`, "ok");
-        }
-        userId = stored;
-
-        // Construir conexión
-        connection = new signalR.HubConnectionBuilder()
-          .withUrl(baseUrl + "hubs/game", { withCredentials: true })
-          .withAutomaticReconnect()
-          .build();
-
-        bindSignalREvents();
-
-        await connection.start();
-        connIdEl.textContent = "connId: " + (connection.connectionId || "(n/a)");
-        setStatus("conectado", "ok");
-        log("Conectado al Hub ✔", "ok");
-
-        // Unirse a la sala
-        await connection.invoke("JoinRoom", roomCode, userId, username);
-
-        // Snapshot jugadores por REST
-        const players = await apiGetPlayers(roomCode);
-        renderPlayers(players || []);
-
-        // Histórico de chat (además el Hub enviará "ChatHistory" al Caller)
-        const hist = await apiGetMessages(roomCode, 50);
-        (hist || []).forEach(m => addChat(
-          `<span class="muted">(hist)</span> <b>${escapeHtml(m.username || m.Username || "user")}:</b> ${linkify(escapeHtml(m.text || m.Text || ""))}`
-        ));
-
-        $("send").disabled = false;
-        $("disconnect").disabled = false;
-        $("connect").disabled = true;
-      } catch (e) {
-        setStatus("error", "err");
-        log("❌ " + (e?.message || e), "err");
-        alert("Error al conectar: " + (e?.message || e));
-      }
-    };
-
-    $("disconnect").onclick = async () => {
-      try { if (connection && roomCode) await connection.invoke("LeaveRoom", roomCode); } catch {}
-      try { if (connection) await connection.stop(); } catch {}
-      connection = null;
-      $("send").disabled = true;
-      $("disconnect").disabled = true;
-      $("connect").disabled = false;
-      setStatus("desconectado");
-      log("Desconectado");
-    };
-
-    $("send").onclick = async () => {
-      const t = $("msg").value.trim();
-      if (!t || !connection) return;
-      try {
-        await connection.invoke("SendChat", roomCode, userId, t);
-        $("msg").value = "";
-      } catch (e) {
-        log("❌ No se pudo enviar: " + (e?.message || e), "err");
-      }
-    };
-
-    // Enter para enviar
-    $("msg").addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter" && !ev.shiftKey) {
-        ev.preventDefault(); $("send").click();
-      }
-    });
-
-    // Prefill de conveniencia
-    window.addEventListener("DOMContentLoaded", () => {
-      $("baseUrl").value = BACKEND_BASE;
-      $("roomCode").value = "12345";
-      $("username").value = "";
-      $("regUsername").value = "";
-      setStatus("desconectado");
-    });
-  </script>
+  <script src="./app.js"></script>
 </body>
 </html>
-
- 
